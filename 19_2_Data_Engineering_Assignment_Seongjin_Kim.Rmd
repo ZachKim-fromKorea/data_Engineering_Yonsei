@@ -1,0 +1,533 @@
+---
+title: "19_2 Data Engineering Assignment"
+author: "Seongjin Kim"
+date: "2019/12/10"
+output:
+  html_document:
+    theme: journal 
+    toc: yes
+    toc_float: true
+    highlight: tango
+    code_folding: show
+    number_section: true
+    self_contained: true
+editor_options: 
+  chunk_output_type: console
+---
+&nbsp;
+&nbsp;
+&nbsp;
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("C:/Users/iihsk/Desktop/19_2_Data_Engineering_Assignment")
+```
+
+# 분석 준비
+
+## 'DVD 대여' 데이터 설명 및 다운로드
+
+[How I analyzed DVD rental data with SQL](https://www.freecodecamp.org/news/project-1-analyzing-dvd-rentals-with-sql-fd12dd674a64/)
+
+위 링크에 접속해서 데이터를 다운로드한다. DVD 대여와 관련한 영화, 고객, 비용 지불과 관련한  데이터가 관계형 데이터베이스 형태로 업로드됐다. 
+
+아래는 관계형 데이터베이스에 대한 E-R 모델이다. 
+
+![Database_Diagram](dvd-rental-sample-database-diagram.png)
+
+* 장르(category), 영화(film), 배우(actor), 구매(payment) 등과 관련한 데이터가 각기 구별된 테이블 저장돼 있다.
+
+* 테이블 별로 각 데이터를 구분하는 `식별자`가 있는데 해당 변수는 좌측에 asteric`*`이 따로 표시돼 있다. 
+
+* 예를 들어 첫번째 테이블 `category`는 대여하는 16개 영화 장르(category)에 숫자를 부여한 건데, category_id를 기준으로 각 데이터가 구별된다. 
+
+## 데이터 베이스 다운로드 및 R과 postgreSQL 연결
+```{r import neccessary packages, echo=FALSE, message=FALSE, warning=FALSE}
+library(RPostgreSQL)
+library(DBI)
+library(tidyverse)
+```
+
+관계형 데이터베이스를 다루기 위해 postgresSQL을 다운로드한다. 다운로드 링크는 다음과 같다.
+
+[postgreSQL download](https://www.postgresql.org/download/windows/)
+
+R에서 postgreSQL을 사용하려면 `RPostgreSQL`과 `DBI` 두 개 패키지가 필요하다.
+
+데이터 분석을 위해 `tidyverse`도 탑재시킨다.
+
+```{r needed variables, echo=FALSE}
+postgre_PW <- "Kkarim9497!" # password
+```
+
+```{r Connect R with postgre SQL}
+pgdrv <- dbDriver("PostgreSQL")
+
+con <- dbConnect(pgdrv, dbname="dvd",
+                 port="5432",
+                 user="postgres",
+                 password=postgre_PW,
+                 host="localhost")
+```
+
+데이터베이스를 postgreSQL 객체로 저장한다. dbDriver() 함수를 통해 postgreSQL에 저장한 데이터 베이스를 R로 불러온 뒤, dbConnect() 함수로 R 객체 `con`에 저장한다. 
+
+
+## 데이터베이스 다운로드
+
+postgreSQL 관리자 통해 데이터 베이스를 테이블별로 확인할 수 있다. 
+편집기를 써서 데이터를 조정하고 수치 자료를 연산하기 위해 데이터를 R에 불러온다. 
+
+```{r import data from Database, warning=FALSE}
+
+# name of all tables to import from database
+table_names <- c("category", "film_category", "film", "language", "film_actor", "inventory", "rental", "payment", "staff", "actor", "customer", "address", "city", "country", "store")
+
+# list object to save data
+data <- list() 
+
+# for loop
+for(i in 1:length(table_names)){
+  data[[i]] <- data.frame(dbGetQuery(con, paste("SELECT * FROM ", table_names[i], sep="")))
+}
+
+# change name of each table
+names(data) <- table_names
+```
+
+`dbGetQuery()` 문을 반복해서 테이블 하나씩 불러올 수도 있겠지만, `for()` loop문을 이용해서 모든 테이블을 한번에 불러올 수도 있다. 
+
+데이터베이스의 테이블을 한 개씩 불러와서 R list 객체인 `data`에 저장한다. 
+
+
+## 테이블 자료
+
+데이터를 분석할 때 계속 참고하기 위해 테이블 설명 자료를 미리 만들어둔다. 
+
+테이블의 이름과 데이터 갯수, 변수 갯수, 그리고 테이블 설명을 따로 저장해둔다.
+
+```{r count number of rows and columns of each table}
+
+# empty object
+number_of_rows <- c()
+number_of_columns <- c()
+
+# for loop to calculate number of rows and columns
+for(i in 1:length(data)){
+  number_of_rows[i] <- nrow(data[[i]])
+  number_of_columns[i] <- ncol(data[[i]])
+  cat(paste(i, ". ", table_names[i], " : ",  nrow(data[[i]]), " rows,", ncol(data[[i]]), " columns", sep=""), sep="\n")
+}
+```
+
+[Descriptions of tables](http://www.postgresqltutorial.com/postgresql-sample-database/)
+
+위 링크에서 각 테이블과 관련한 설명을 찾을 수 있다. 설명을 텍스트 파일로 불러와 R에 저장한다. 
+
+
+
+```{r add table descriptions}
+# description for each table
+table_description <- read.table("data_description.txt", sep="\t", stringsAsFactors=FALSE)
+table_description <- table_description[[1]]
+
+table_description[1]
+```
+
+위 보이는 것과 같이, 각 데이터는 테이블 이름(actor)과 설명('stores actors data ...') 사이 물음표(?)로 구별돼 있다. 패키지 `rstring`(tidyverse에 포함)의 함수를 활용해 테이블 이름과 설명을 분ㄹ한다. 
+
+```{r split text with question mark}
+# split texts between question mark
+location_question_mark <- table_description %>% str_locate("\\?")
+
+location_question_mark <- location_question_mark[,1]
+
+location_question_mark[5] <- 15
+length_description <- nchar(table_description)
+
+Name <- table_description %>% str_sub(1, location_question_mark-2)
+
+Description <- table_description %>% str_sub(location_question_mark+1, length_description)
+
+table_names[!table_names %in% Name] # all other tables have description except for language리
+```
+
+위 코드를 실행하면 물음표를 앞 뒤로 테이블의 이름과 설명을 구분할 수 있다. 아래 코드를 통해 코드를 모든 테이블 자료에 적용한다. 
+
+```{r finish splitting}
+Name[length(Name)+1] <- "language"
+Description[length(Description)+1] <- "Language support for each film"
+index <- match(table_names, Name)# index to match between table_names and Name
+
+Name_and_description <- cbind(Name, Description, index)
+
+# reference about tables from sql database
+table_data <- data.frame(Name = table_names, Rows = number_of_rows, Columns = number_of_columns)
+
+indexed_description <- Description[index]
+
+table_data <- cbind(table_data, indexed_description)
+
+names(table_data) <- c("Names", "Rows", "Columns", "Descriptions")
+```
+
+관계형 데이터베이스에 포함됐던 테이블에 대한 자료는 다음과 같다. 
+
+```{r here is table_data}
+table_data %>% DT::datatable()
+```
+
+* 16개 장르, 1000개 영화에 대한 데이터이다. 해당 영화에 출연한 배우 5462명에 대한 자료도 저장돼 있다. 영화는 모두 6개 언어로 제공된다. 
+* 모두 16044번 대여가 이뤄졌고, 그에 대해 비용 지불이 14592회 발생했다. 
+
+# 장르별 대여빈도
+
+`Q. What are the top and least rented (in-demand) genres and what are their total sales?`
+
+`수요가 가장 많고, 가장 적은 장르는 무엇이며, 장르별 매출은 얼마인가?`
+
+장르별 DVD 대여 빈도를 확인하고, 인기가 가장 높거나 낮았던 장르를 파악한다. 또 장르별 DVD 대여 매출을 계산한다. 
+
+장르에 대한 설명은 `category - name`, 각 영화의 식별자는 `inventory - film_id`, 인벤토리 식별자는
+
+`category`에서 *name과 category_id*,
+`film_category`에서 *category_id와 film_id*,
+`inventory`에서 *film_id와 inventory_id*,
+`rental`에서 *inventory_id와 rental_id*
+`payment`에서 *rental_id와 amoun*를 연결한다.
+
+문제 해결을 위해 `dplyr::group_by()`로 장르(name)별 amount를 합산한다. 
+
+## 데이터 병합
+
+필요한 것은 `category` `film_category` `inventory` `rental` `payment` 모두 다섯개 테이블이다.  
+
+```{r question1 needed tables}
+needed_tables <- c("category", "film_category", "inventory", "rental", "payment")
+index <- match(needed_tables, table_data[,"Names"])
+
+category <- data[[index[1]]]
+film_category <- data[[index[2]]]
+inventory <- data[[index[3]]]
+rental <- data[[index[4]]]
+payment <- data[[index[5]]]
+
+# get rid of "last_update"
+category <- category[,-ncol(category)]
+film_category <- film_category[,-ncol(film_category)]
+inventory <- inventory[,-ncol(inventory)]
+rental <- rental[,-ncol(rental)]
+payment <- payment[,-ncol(payment)]
+```
+
+### 데이터 병합, 장르 식별자와 이름
+
+영화 장르의 id를 정의한 테이블 `category`와 영화별로 category_id를 부여한 테이블 `film_category`를 병합한다. 
+
+```{r question1 combine between category and film category}
+category_and_film_category <- right_join(category, film_category, by = "category_id")
+```
+
+`film_category`는 영화(film_id)과 장르(category_id)를 연결한 테이블이다. 여기 film_id를 식별자로 해서, 장르명(name)을 붙여야 한다. 따라서 category와 film_category를 순서대로 적고 right_join을 적용한다. 
+
+또 위에 적은 순서에 맞게 데이터 병합을 계속한다. 어쨌든 최종 식별자는 payment(거래 건수)가 돼야 하는데, 따라서, 영화 -> 렌탈 -> payment까지 가면서 right_join으로 연결하도록 한다. 
+
+```{r question1 continue combining data}
+film_category_and_inventory <- right_join(category_and_film_category, inventory, by = "film_id")
+inventory_and_rental <- right_join(film_category_and_inventory, rental, by = "inventory_id")
+
+# customer_id would be duplicated
+inventory_and_rental <- inventory_and_rental[, -which(colnames(inventory_and_rental)=="customer_id")]
+rental_and_payment <- right_join(inventory_and_rental, payment, by = "rental_id")
+
+rental_and_payment %>% DT::datatable()
+```
+
+```{r question1 fully combined data}
+#glimpse(rental_and_payment)
+total_sales_by_genre <- rental_and_payment %>% 
+  group_by(name) %>% 
+  summarise(total_sales = sum(amount))
+
+total_sales_by_genre %>% DT::datatable()
+
+sales <- pull(total_sales_by_genre[,"total_sales"])
+
+cat(paste("Top Selling :", total_sales_by_genre[which.max(sales),"name"]), "\n",
+    paste("Least Selling :", total_sales_by_genre[which.min(sales),"name"]), "\n")
+```
+
+* 장르중 Sports의 매출이 가장 높고, Music의 매출이 가장 낮다.
+
+```{r question1 visualization with barplot, echo = FALSE}
+# bar_graph <- ggplot(total_sales_by_genre, aes(name))
+# bar_graph + geom_bar()
+```
+
+# 장르별 대여 고객 수
+`Can we know how many distinct users have rented each genre?`
+
+```{r question2 count distinct users by genre}
+rental_and_inventory <- left_join(rental, inventory, by = "inventory_id")
+rental_and_category <- left_join(rental_and_inventory, film_category, by = "film_id")
+rental_and_genre <- left_join(rental_and_category, category, by = "category_id")
+
+glimpse(rental_and_genre)
+```
+
+```{r question2 calculate number of users}
+genres <- unique(rental_and_genre$name)
+number_of_users <- c()
+for(i in 1:length(genres)){
+  index <- rental_and_genre$name==genres[i]
+  interim_data <- rental_and_genre[index, ]
+  number_of_users[i] <- length(unique(interim_data$customer_id))
+}
+
+number_users_by_genre <- cbind(genres, number_of_users)
+
+number_users_by_genre %>% DT::datatable()
+```
+
+
+
+
+# 장르별 평균 대여 비율
+`What is the average rental rate for each genre? (from the highest to the lowest)`
+
+```{r question3 rental rate}
+film <- data[[3]]
+
+film_and_film_category <- right_join(category_and_film_category, film, by = "film_id")
+
+rental_rate_by_genre <- film_and_film_category %>% 
+  group_by(name) %>% 
+  summarise(rental_rate_by_genre = mean(rental_rate))
+```
+
+# 기간 내 반납 여부
+`How many rented films were returned late, early, and on time?`
+
+`대여한 DVD 중 제 때 반납한 것, 연체, 정시 반납한 게 각각 몇 건인가?`
+
+테이블 `film`에 *rental_duration* 변수가 있다.각 dvd 마다 대여 기간이 다른건데, return_date와 rental_date 간 차이를 구해 모두 며칠 대여했는지를 구하고, 이를 rental_duration과 비교해 연체 여부를 확인한다.
+
+```{r question4 rental period}
+library(lubridate)
+
+film_and_inventory <- right_join(film, inventory, by = "film_id")
+film_and_inventory_and_rental <- right_join(film_and_inventory, rental, by = "inventory_id")
+```
+
+테이블 `rental`의 *rental_id*가 테이블 `film`의 *rental_duration*까지 이어져야 한다.
+먼저 film과 inventory를 이을 건데, 결국 대여의 기초가 되는 것은 인벤토리기 때문에 inventory_id를 기준으로 병합해야 한다. 이에 film, inventory를 차례로 쓰고 right_join() 해준다. 
+
+병합한 데이터와 rental을 병합해야 한다. 식별자 rental_id가 있는 테이블 `rental`을 기준으로 join해야 한다. 이에 앞서 병합한 데이터와 rental을 차례로 써준 뒤, right_join() 해준다.
+
+```{r question4 rental period2}
+question4_data <- film_and_inventory_and_rental %>% 
+  mutate(rental_period = day(as.period(return_date - rental_date))) %>% # add rental_period
+  mutate(rental_status = ifelse(rental_period > rental_duration, "late", ifelse(rental_period == rental_duration, "on time", "early"))) # conditional statement to add rental_status
+
+colSums(is.na(question4_data)) # 183 NAs in return_date
+```
+
+* mutate() 함수를 통해 새 변수를 만들어야 하기 때문에 question4_data라는 새로운 데이터프레임을 만들었다. 
+
+* 위에 colSums(is.na(question4_data)) 통해 각 column 별로 NA 값이 몇 개 있나 확인할 수 있다. 보면, return_date에 NA 183개가 있다. 이는 빌려 놓고 반납하지 않은 건수가 183 건 있다는 뜻이다. 
+
+* 반납하지 않은 것은 여기서 연체(late)와 동일하게 처리한다. 이에 NA 값은 "late"로 대체하도록 한다. 
+
+```{r how many films were returned late}
+rental_status <- question4_data[,"rental_status"]
+
+# replace NAs with "late"
+NA_index <- which(is.na(rental_status))
+rental_status[NA_index] <- "late"
+
+cat(paste("Late : ", sum(rental_status=="late"), " (", round(sum(rental_status=="late")/length(rental_status)*100, 2), "%)", sep=""), "\n",
+    paste("On Time :", sum(rental_status=="on time"), " (", round(sum(rental_status=="on time")/length(rental_status)*100, 2), "%)", sep=""), "\n",
+    paste("Early :", sum(rental_status=="early"), " (", round(sum(rental_status=="early")/length(rental_status)*100, 2), "%)", sep=""), "\n")
+```
+
+* 모든 거래 건수(16044) 중 당일에 반납한 게 1720건(10.72%)로 가장 많고, 늦게 반납한 것이 6500여 건(41.05%),  반납일 이전에 반납한 게 7738(48.23%)로 기록됐다.
+
+# 국가별 분석
+
+`In which countries does Rent A Film have a presence and what is the customer base in each country? What are the total sales in each country? (from most to least)`
+
+`Rent A Film이 어느 국가에 서비스 중이고, 서비스를 가장 활발히 사용하는 고객의 특징은 어떻게 되나? 국가별 총 매출은 어떻게 되나?`
+
+```{r question5 prepare data}
+# country
+country <- data[[14]]
+country <- country[, -ncol(country)] # delete last_update
+# city
+city <- data[[13]]
+city <- city[, -ncol(city)] # delete last_update
+# customer
+customer <- data[[11]]
+customer <- customer[, -ncol(customer)]
+# address
+address <- data[[12]]
+address <- address[,-ncol(address)]
+```
+
+```{r question5 film presence}
+length(unique(country$country))
+```
+
+* `Rent A Film`은 모두 109개 나라에 서비스를 제공하고 있다. 109개 나라 모두 매출이 발생했는지 확인하기 위해 데이터 정제 작업이 더 필요하다. 구체적인 국가명은 아래 자료를 더 병합한 테이블 통해 보일 계획이다.
+
+* customer base란 기업의 상품과 서비스를 활발히 구매하는 고객 그룹(특징과 구분)을 의미한다. 고객과 관련한 정보는 많지 않기 때문에 고객이 가장 많이 분포한 지역과 매장을 파악한다. 
+
+```{r question5 combine data}
+customer_and_address <- left_join(customer, address, by = "address_id")
+customer_and_city <- left_join(customer_and_address, city, by = "city_id")
+customer_and_country <- left_join(customer_and_city, country, by = "country_id")
+```
+
+* 테이블 `customer`에 있는 고객 관련 자료들과 `country`를 연결한다.
+
+```{r question5 which city has the most customers}
+by_city <- customer_and_country %>% 
+  group_by(city) %>% 
+  summarise(number_of_customers = length(unique(customer_id)), number_of_stores = length(unique(store_id)))
+```
+
+`payment`의 customer_id 통해 `customer`과 연결
+`customer`의 address_id 통해 `address`와 연결
+`address`의 city_id 통해 `city`와 연결
+`city`의 country_id 통해 `country`와 연결
+
+```{r question5 link between payment and country}
+payment_and_customer <- left_join(payment, customer, by = "customer_id")
+payment_and_address <- left_join(payment_and_customer, address, by = "address_id")
+payment_and_city <- left_join(payment_and_address, city, by = "city_id")
+payment_and_country <- left_join(payment_and_city, country, by = "country_id")
+```
+
+```{r question5 which city has its most customers and stores}
+number_of_stores_and_customers <- payment_and_city %>% 
+  group_by(city_id) %>% 
+  summarise(number_of_stores = length(unique(store_id)), number_of_customers = length(unique(customer_id)), sales_by_city = sum(amount))
+
+city_and_numbers <- left_join(city, number_of_stores_and_customers, by = "city_id")
+country_and_numbers <- left_join(city_and_numbers, country, by = "country_id")
+```
+
+* 도시별 매장과 고객 수를 파악하고자 한다. 이를 위해 group_by() 함수 통해 city_id 별로 store_id와 customer_id의 개수를 파악한다.
+
+* 그런데 파악한 결과, 도시별 매장과 고객의 수가 거의 1개인 것으로 계산된다. 글로벌한 회사가, 도시별로 고객이 한명뿐일리가 없는데, 다운로드한 데이터베이스가 샘플이기 때문인 것으로 보인다.
+
+```{r question5 sales by country}
+total_sales_by_country <- payment_and_country %>% 
+  group_by(country) %>% 
+  summarise(total_sales_by_country = sum(amount))
+
+# search for NA or 0
+which(is.na(total_sales_by_country$total_sales_by_country))
+which(total_sales_by_country$total_sales_by_country==0)
+# returns none
+```
+
+* 국가별 매출을 확인한다. 이 때 혹시 데이터베이스에 의미 없는 자료가 포함될 우려도 있기 때문에 전체 매출이 0인 데이터를 찾아봤다. 확인 결과 모든 국가가 매출은 0 이상이어서, 데이터베이스에 포함된 109개 국가 모두 거래가 발생한 것으로 파악된다.
+
+```{r question5 customer base}
+customer_base <- country_and_numbers %>% 
+  group_by(country) %>% 
+  summarise(outselling_city = max(sales_by_city))
+
+customer_base %>% DT::datatable()
+```
+
+* 국가별로 매출이 가장 높은 도시들은 위의 표에 적힌 바와 같다.
+
+
+# 최우수 고객
+
+`Who are the top 5 customers per total sales and can we get their details just in case Rent A Film wants to reward them?`
+
+`최우수 고객 다섯명에 대한 자료를 정리해라`
+
+```{r question6 top 5 customers}
+top_5_customers <- payment_and_customer %>% 
+  group_by(customer_id) %>% 
+  summarise(total_purchase_by_customer = sum(amount))
+
+index <- which(order(top_5_customers$total_purchase_by_customer, decreasing = TRUE) %in% 1:5)
+top_5_customers_id <- top_5_customers$customer_id[index] # ids for top 5 customers
+top_5_customers_purchase <- top_5_customers$total_purchase_by_customer[index]
+```
+
+* `customer_id` 별로 묶어서 매출을 모두 합한다. 이때 order() 함수를 써서 매출의 순위를 파악할 수 있다. 순위가 1~5에 해당하는 데이터의 자료 순서를 찾아 객체 *index*에 저장한다. 
+
+```{r top 5 customers detail}
+index <- which(customer$customer_id %in% top_5_customers_id)
+top_5_customer_data <- customer[index, ]
+
+top_5_customer_data %>% DT::datatable()
+```
+
+* 최우수 고객 5명에 대한 데이터는 위의 표와 같다.
+
+* 최우수 고객에게 보은행사를 하려는데, 고객 관련해 잘 알아야 딱 필요한 걸 제공할 있을 것이다. 이에 지금까지 거래 데이터를 참고해서 *좋아하는 장르*, *연체 빈도*를 파악할 계획이다.
+
+* 좋아하는 장르를 파악하면 뉴스레터 등을 발송할 수있고, 연체 빈도가 높다면 기간을 늘려주거나 연체료 인하 등을 할 수 있을 것이다. 
+
+```{r their preference for movies}
+customer_and_payment <- left_join(customer, payment, by = "customer_id")
+customer_and_rental <- left_join(customer_and_payment, rental, by = "rental_id")
+customer_and_inventory <- left_join(customer_and_rental, inventory, by = "inventory_id")
+customer_and_film <- left_join(customer_and_inventory, film, by = "film_id")
+customer_and_film_category <- left_join(customer_and_film, film_category, by = "film_id")
+
+# take rental status and rental id from question4_data
+interim_data <- question4_data[, which(colnames(question4_data) %in% c("rental_id", "rental_status"))]
+
+customer_and_film_rental <- left_join(customer_and_film_category, interim_data, by = "rental_id")
+```
+
+```{r shrink data to top 5 customers}
+index <- customer_and_film_rental$customer_id.x %in% top_5_customers_id
+top_5_data <- customer_and_film_rental[index, ]
+```
+
+dplyr::group_by()를 사용해서 최우수 고객의 총 구매금액과 가장 활발하게 대여했던 영화 장르, 가장 자주 찾았던 매장과 기간 내 반납 비율을 계산한다. 
+
+```{r summarised detailed information}
+top_5_details <- top_5_data %>% 
+  group_by(customer_id.x) %>% 
+  summarise(Purchase = sum(amount),
+            Preference = max(table(category_id)),
+            Store = max(table(store_id.x)),
+            Return_Rate = round(sum(rental_status!="late")/sum(rental_status=="late"|rental_status=="early"|rental_status=="on time")*100, 2)
+            )
+
+# slight moderation (1) change column name (2) find name of genre
+colnames(top_5_details)[1] <- "customer_id"
+
+
+index <- which(customer$customer_id %in% top_5_customers_id)
+
+top_5_info <- customer[index, which(names(customer) %in% c("customer_id", "first_name", "last_name", "email", "address_id", "create_date"))]
+
+top_5_info <- top_5_info %>% 
+  mutate(Names = paste(first_name, last_name), Customer_duration = as.Date(now())-create_date)
+
+top_5_detailed_information <- left_join(top_5_info, top_5_details, by = "customer_id")
+
+# genre names => 4(Classics), 5(Comedy)
+
+genre_factor <- factor(c(5, 5, 4, 5, 4), levels = c(4, 5), labels = c("Classics", "Comedy"))
+top_5_detailed_information[,"Preference"] <- genre_factor
+
+top_5_detailed_information %>% DT::datatable()
+```
+
+* 최우수 고객 다섯 명의 자료를 취합한 테이블이다. 장르를 살펴보면 3명이 코미디, 두 명이 고전 영화를 가장 많이 빌렸다. 
+
+* 또 연체율을 살펴보면 우수 고객임에도 연체율이 상당히 높았던 것을 볼 있다. 
+
+* 이에 우수고객 보상을 하려면 두 가지 추천을 할 수 있는데 (1) 코미디, 고전 영화 쪽으로 영화 추천하는 뉴스레터를 발송한다 (2) 연체료를 인하한다.
